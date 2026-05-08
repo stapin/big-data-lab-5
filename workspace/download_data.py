@@ -5,14 +5,10 @@ from pyspark.sql.functions import col, monotonically_increasing_id
 from config import GreenplumConfig
 
 class DataSeeder:
-    """Класс для скачивания сырых данных и их первичной загрузки в Greenplum."""
-
     def __init__(self):
-        # Используем абсолютный путь для JDBC драйвера
         self.jar_path = os.path.abspath("postgresql-42.5.4.jar")
         self.download_jdbc_driver()
 
-        # Инициализируем Spark без конфликтов
         self.spark = SparkSession.builder \
             .appName("Greenplum_Seeder") \
             .master("local[*]") \
@@ -25,7 +21,6 @@ class DataSeeder:
         self.url = "https://static.openfoodfacts.org/data/en.openfoodfacts.org.products.csv.gz"
 
     def download_jdbc_driver(self):
-        """Прямое скачивание драйвера БД."""
         if not os.path.exists(self.jar_path):
             print("[*] Скачивание PostgreSQL JDBC драйвера...")
             url = "https://jdbc.postgresql.org/download/postgresql-42.5.4.jar"
@@ -33,7 +28,6 @@ class DataSeeder:
             print("[*] Драйвер успешно скачан.")
 
     def download_data(self):
-        """Скачивание дампа данных."""
         if not os.path.exists(self.file_path):
             print(f"[*] Скачивание данных с {self.url}...")
             # Используем urllib вместо wget для надежности в Python-контейнере
@@ -43,7 +37,6 @@ class DataSeeder:
             print("[*] Файл с данными уже существует, загрузка пропущена.")
 
     def process_and_load(self):
-        """Чтение файла, базовая очистка и запись в Greenplum."""
         print("[*] Чтение данных в Spark...")
         raw_df = self.spark.read.csv(self.file_path, sep='\t', header=True)
 
@@ -53,19 +46,15 @@ class DataSeeder:
         ]
         df = raw_df.select(*target_columns).dropna()
 
-        # Приводим типы
         for c in target_columns[1:]:
             df = df.withColumn(c, col(c).cast("float"))
         
-        # Добавляем уникальный ID (необходимо для ключа распределения Greenplum)
         df = df.withColumn("id", monotonically_increasing_id())
 
-        # Берем 5% данных для быстрой работы
         df_sample = df.sample(fraction=0.05, seed=42)
         
         print(f"[*] Запись данных ({df_sample.count()} строк) в Greenplum...")
         
-        # Запись через JDBC
         df_sample.write \
             .mode("overwrite") \
             .option("createTableOptions", "DISTRIBUTED BY (id)") \
