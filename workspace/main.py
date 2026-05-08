@@ -1,83 +1,61 @@
-from pyspark.sql import SparkSession
-from pyspark.ml.feature import VectorAssembler, StandardScaler
-from pyspark.ml.clustering import KMeans
 from config import GreenplumConfig
+from spark_manager import SparkManager
+from model import FoodClusteringModel
 
-class KMeansETLPipeline:
-    """ETL пайплайн для кластеризации данных из Greenplum."""
-
+class ETLPipeline:
+    """Главный оркестратор: Выгрузка из БД -> Обучение модели -> Загрузка в БД."""
+    
     def __init__(self):
-        print("[*] Инициализация SparkSession...")
-        self.spark = SparkSession.builder \
-            .appName("Greenplum_ETL_KMeans") \
-            .master("local[*]") \
-            .config("spark.jars.packages", "org.postgresql:postgresql:42.5.4") \
-            .getOrCreate()
-        self.spark.sparkContext.setLogLevel("ERROR")
-        self.df = None
-        self.clustered_df = None
+        # Инициализируем наши изолированные компоненты
+        self.spark_manager = SparkManager()
+        self.spark = self.spark_manager.get_session()
+        self.ml_model = FoodClusteringModel(k_clusters=5)
 
-    def extract(self):
-        """Выгрузка данных из источника (Greenplum)."""
-        print(f"[*] Выгрузка (EXTRACT) из таблицы {GreenplumConfig.RAW_TABLE}...")
-        self.df = self.spark.read.jdbc(
+    def extract_data(self):
+        """Этап 1: Extract (Выгрузка данных из Greenplum)."""
+        print(f"[*] Extract: Чтение таблицы {GreenplumConfig.RAW_TABLE} из Greenplum...")
+        df = self.spark.read.jdbc(
             url=GreenplumConfig.JDBC_URL,
             table=GreenplumConfig.RAW_TABLE,
             properties=GreenplumConfig.PROPERTIES
-        ).cache()
-        print(f"[*] Успешно выгружено {self.df.count()} строк.")
+        )
+        # Кэшируем выгруженные данные в RAM, так как K-Means итеративный
+        df.cache()
+        print(f"[*] Выгружено строк: {df.count()}")
+        return df
 
-    def transform(self, k_clusters=5):
-        """Очистка, векторизация, масштабирование и применение K-Means."""
-        print("[*] Трансформация (TRANSFORM): Подготовка признаков и запуск ML модели...")
-        
-        feature_cols = ["energy-kcal_100g", "proteins_100g", "fat_100g", "carbohydrates_100g"]
-        
-        # 1. Векторизация
-        assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
-        df_vectorized = assembler.transform(self.df.dropna(subset=feature_cols))
+    def transform_and_model(self, df):
+        """Этап 2: Transform (Запуск пайплайна машинного обучения)."""
+        # Вся сложная математика теперь скрыта внутри класса модели
+        result_df = self.ml_model.fit_predict(df)
+        return result_df
 
-        # 2. Масштабирование
-        scaler = StandardScaler(inputCol="features", outputCol="scaledFeatures", withStd=True, withMean=True)
-        scaler_model = scaler.fit(df_vectorized)
-        df_scaled = scaler_model.transform(df_vectorized)
-
-        # 3. K-Means кластеризация
-        kmeans = KMeans(featuresCol="scaledFeatures", predictionCol="cluster_id", k=k_clusters, seed=42)
-        model = kmeans.fit(df_scaled)
-        
-        # 4. Формирование финального датафрейма для отправки в базу
-        # Нам нужны только ID продукта, название и номер кластера (нормализация данных)
-        self.clustered_df = model.transform(df_scaled).select("id", "product_name", "cluster_id")
-        print("[*] Кластеризация успешно завершена. Пример результатов:")
-        self.clustered_df.show(5)
-
-    def load(self):
-        """Загрузка результатов модели обратно в источник (Greenplum)."""
-        print(f"[*] Загрузка (LOAD) результатов в таблицу {GreenplumConfig.CLUSTERED_TABLE}...")
-        
-        # Снова используем DISTRIBUTED BY для корректной балансировки в Greenplum
-        self.clustered_df.write \
+    def load_data(self, df):
+        """Этап 3: Load (Загрузка результатов обратно в Greenplum)."""
+        print(f"[*] Load: Запись результатов в таблицу {GreenplumConfig.CLUSTERED_TABLE}...")
+        df.write \
             .mode("overwrite") \
             .option("createTableOptions", "DISTRIBUTED BY (id)") \
-            .jdbc(url=GreenplumConfig.JDBC_URL,
-                  table=GreenplumConfig.CLUSTERED_TABLE,
-                  properties=GreenplumConfig.PROPERTIES)
-                  
-        print("[*] Результаты модели успешно загружены в Greenplum!")
+            .jdbc(
+                url=GreenplumConfig.JDBC_URL,
+                table=GreenplumConfig.CLUSTERED_TABLE,
+                properties=GreenplumConfig.PROPERTIES
+            )
+        print("[*] ETL процесс успешно завершен!")
 
     def run(self):
-        """Оркестратор запуска."""
+        """Точка входа пайплайна."""
         try:
-            self.extract()
-            self.transform(k_clusters=5)
-            self.load()
+            # Строгая последовательность E -> T -> L
+            raw_data = self.extract_data()
+            clustered_data = self.transform_and_model(raw_data)
+            self.load_data(clustered_data)
         except Exception as e:
-            print(f"[!] Ошибка во время выполнения пайплайна: {e}")
+            print(f"[!] Ошибка во время ETL процесса: {e}")
         finally:
-            self.spark.stop()
-            print("[*] ETL Пайплайн завершил работу.")
+            # Гарантированное освобождение ресурсов
+            self.spark_manager.stop()
 
 if __name__ == "__main__":
-    pipeline = KMeansETLPipeline()
+    pipeline = ETLPipeline()
     pipeline.run()
