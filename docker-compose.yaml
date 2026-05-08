@@ -1,24 +1,19 @@
 version: '3.8'
 
 services:
-  # Контейнер с базой данных Greenplum
   greenplum-db:
     image: projectairws/greenplum:latest
     container_name: greenplum-container
     ports:
       - "5432:5432"
-    # Добавляем эти параметры, чтобы фоновые процессы не убивали контейнер
     tty: true
     stdin_open: true
 
-  # Наш чистый Python+Spark контейнер
   pyspark-env:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: spark-pure-container
-    # МАГИЯ ЗДЕСЬ: Подключаем Spark напрямую в сетевой стек Greenplum.
-    # Теперь для Spark база находится на "localhost"!
     network_mode: "service:greenplum-db"
     volumes:
       - ./workspace:/workspace
