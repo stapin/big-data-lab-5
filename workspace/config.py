@@ -1,11 +1,15 @@
 import os
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 class GreenplumConfig:
-    HOST = "localhost"
-    PORT = "5432"
-    DB_NAME = "postgres" 
-    USER = "gpadmin"
-    PASSWORD = "pivotal" 
+    HOST = os.getenv("HOST", "localhost")
+    PORT = os.getenv("PORT", "5432")
+    DB_NAME = os.getenv("DB_NAME", "postgres") 
+    USER = os.getenv("USER", "gpadmin")
+    PASSWORD = os.getenv("PASSWORD") 
     
     JDBC_URL = f"jdbc:postgresql://{HOST}:{PORT}/{DB_NAME}?sslmode=disable&stringtype=unspecified"
     
