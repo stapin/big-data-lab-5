@@ -5,12 +5,14 @@ from config import SparkConfig
 logger = logging.getLogger(__name__)
 
 class SparkManager:
+    """Encapsulates the initialization logic for SparkSession."""
+    
     def __init__(self):
         self._spark = None
 
     def get_session(self) -> SparkSession:
         if self._spark is None:
-            logger.info("Initializing SparkSession with custom configurations")
+            logger.info("Initializing SparkSession for local execution")
             builder = SparkSession.builder \
                 .appName(SparkConfig.APP_NAME) \
                 .master(SparkConfig.MASTER)
@@ -19,7 +21,6 @@ class SparkManager:
                 builder = builder.config(key, value)
                 
             self._spark = builder.getOrCreate()
-            
             self._spark.sparkContext.setLogLevel("ERROR")
             logger.info("SparkSession successfully created")
             

@@ -1,63 +1,74 @@
 import logging
-from config import GreenplumConfig
+from pyspark.sql.functions import col, monotonically_increasing_id
 from spark_manager import SparkManager
-from model import FoodClusteringModel
+from ml_clustering import FoodClusteringModel
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("ETL_Orchestrator")
+logger = logging.getLogger("Lab1_Pipeline")
 
-class ETLPipeline:
+class ClusteringPipeline:
+    """Pipeline: Read CSV -> Preprocess -> Train ML -> Save Results."""
     
     def __init__(self):
         self.spark_manager = SparkManager()
         self.spark = self.spark_manager.get_session()
         self.ml_model = FoodClusteringModel(k_clusters=5)
+        self.file_path = "openfoodfacts.csv.gz"
+        self.output_path = "clustering_results"
 
-    def extract_data(self):
-        logger.info(f"Extract stage: Reading table '{GreenplumConfig.RAW_TABLE}' from Greenplum")
-        df = self.spark.read.jdbc(
-            url=GreenplumConfig.JDBC_URL,
-            table=GreenplumConfig.RAW_TABLE,
-            properties=GreenplumConfig.PROPERTIES
-        )
+    def load_and_preprocess_data(self):
+        """Reads the local CSV file and samples the data."""
+        logger.info(f"Reading raw data from {self.file_path}")
+        raw_df = self.spark.read.csv(self.file_path, sep='\t', header=True)
+
+        target_columns = [
+            "product_name", "energy-kcal_100g", "proteins_100g", 
+            "fat_100g", "carbohydrates_100g"
+        ]
+        df = raw_df.select(*target_columns).dropna()
+
+        for c in target_columns[1:]:
+            df = df.withColumn(c, col(c).cast("float"))
+            
+        df = df.withColumn("id", monotonically_increasing_id())
+
+        # Take a 5% sample to accommodate local system resources
+        df_sample = df.sample(fraction=0.05, seed=42)
+        df_sample.cache()
         
-        df.cache()
-        row_count = df.count()
-        logger.info(f"Extract stage completed. Rows extracted: {row_count}")
-        return df
+        logger.info(f"Data loading completed. Sampled rows for ML: {df_sample.count()}")
+        return df_sample
 
-    def transform_and_model(self, df):
-        logger.info("Transform stage: Starting machine learning pipeline")
+    def run_modeling(self, df):
+        """Executes the machine learning clustering."""
+        logger.info("Starting machine learning pipeline")
         result_df = self.ml_model.fit_predict(df)
         return result_df
 
-    def load_data(self, df):
-        logger.info(f"Load stage: Writing results to table '{GreenplumConfig.CLUSTERED_TABLE}'")
+    def save_results(self, df):
+        """Saves the output to a local directory."""
+        logger.info(f"Saving clustering results to directory: {self.output_path}")
         df.write \
             .mode("overwrite") \
-            .option("createTableOptions", "DISTRIBUTED BY (id)") \
-            .jdbc(
-                url=GreenplumConfig.JDBC_URL,
-                table=GreenplumConfig.CLUSTERED_TABLE,
-                properties=GreenplumConfig.PROPERTIES
-            )
-        logger.info("Load stage completed successfully")
+            .csv(self.output_path, header=True)
+        logger.info("Results successfully saved")
 
     def run(self):
-        logger.info("Starting ETL pipeline execution")
+        """Entry point for the execution."""
+        logger.info("Starting Lab 1 Execution Pipeline")
         try:
-            raw_data = self.extract_data()
-            clustered_data = self.transform_and_model(raw_data)
-            self.load_data(clustered_data)
-            logger.info("ETL pipeline successfully finished")
+            data = self.load_and_preprocess_data()
+            clustered_data = self.run_modeling(data)
+            self.save_results(clustered_data)
+            logger.info("Lab 1 pipeline successfully finished")
         except Exception as e:
-            logger.error(f"Critical error occurred during ETL pipeline execution: {e}")
+            logger.error(f"Critical error occurred: {e}")
         finally:
             self.spark_manager.stop()
 
 if __name__ == "__main__":
-    pipeline = ETLPipeline()
+    pipeline = ClusteringPipeline()
     pipeline.run()

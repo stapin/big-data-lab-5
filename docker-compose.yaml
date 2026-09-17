@@ -1,14 +1,6 @@
 version: '3.8'
 
 services:
-  greenplum-db:
-    image: projectairws/greenplum:latest
-    container_name: greenplum-container
-    ports:
-      - "5432:5432"
-    tty: true
-    stdin_open: true
-
   pyspark-env:
     build:
       context: .
