@@ -1,7 +1,7 @@
 import logging
 from pyspark.sql.functions import col, monotonically_increasing_id
-from spark_manager import SparkManager
-from ml_clustering import FoodClusteringModel
+from spark_manager import SparkManager, SparkProfile
+from model import FoodClusteringModel
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,7 +14,7 @@ class ClusteringPipeline:
     
     def __init__(self):
         self.spark_manager = SparkManager()
-        self.spark = self.spark_manager.get_session()
+        self.spark = self.spark_manager.get_session(SparkProfile.ML_PIPELINE)
         self.ml_model = FoodClusteringModel(k_clusters=5)
         self.file_path = "openfoodfacts.csv.gz"
         self.output_path = "clustering_results"

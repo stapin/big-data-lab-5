@@ -1,17 +1,22 @@
 import os
-from dotenv import load_dotenv
+import yaml
 
 
-load_dotenv()
+class SparkConfigManager:
+    def __init__(self, config_file="spark_config.yaml"):
+        if not os.path.exists(config_file):
+            raise FileNotFoundError(f"Configuration file {config_file} not found!")
 
-class SparkConfig:
-    APP_NAME = "Greenplum_ML_Pipeline"
-    MASTER = "local[*]"
-    
-    SETTINGS = {
-        "spark.driver.memory": "2g",
-        "spark.executor.memory": "4g",
-        "spark.memory.fraction": "0.8",
-        "spark.sql.shuffle.partitions": "10",
-        "spark.default.parallelism": "10",
-    }
+        with open(config_file, 'r', encoding='utf-8') as f:
+            yaml_content = f.read()
+
+        self._config = yaml.safe_load(yaml_content)
+
+    def get_spark_config(self, profile_name: str) -> dict:
+        profiles = self._config.get("spark_profiles", {})
+        if profile_name not in profiles:
+            raise ValueError(f"Spark profile '{profile_name}' not found in config.yaml")
+
+        return profiles[profile_name]
+
+spark_conf_manager = SparkConfigManager()

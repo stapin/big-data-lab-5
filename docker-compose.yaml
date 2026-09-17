@@ -6,8 +6,5 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: spark-pure-container
-    network_mode: "service:greenplum-db"
     volumes:
       - ./workspace:/workspace
-    depends_on:
-      - greenplum-db
